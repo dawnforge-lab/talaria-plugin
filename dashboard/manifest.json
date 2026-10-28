@@ -1,0 +1,10 @@
+{
+  "name": "talaria_push",
+  "label": "Talaria",
+  "description": "Routes the Talaria app calls on this host (pairing, notification settings, chat takeover, calls, shared phone data, group rooms, artifacts).",
+  "icon": "Puzzle",
+  "version": "1.0.0",
+  "tab": { "path": "/talaria", "hidden": true },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

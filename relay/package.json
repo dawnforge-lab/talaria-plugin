@@ -1,0 +1,15 @@
+{
+  "name": "talaria-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "storage:status": "node src/storage-status.mjs",
+    "storage:prune-inactive": "node src/storage-prune-inactive.mjs",
+    "test": "node --test"
+  }
+}

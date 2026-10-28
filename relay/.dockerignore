@@ -1,0 +1,8 @@
+.env
+*.p8
+*.key
+*.pem
+test
+testing
+deploy
+README.md

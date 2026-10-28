@@ -1,0 +1,14 @@
+{
+  "host_private": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "host_public": "j0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4KF8",
+  "device_private": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "device_public": "NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ",
+  "device_id": "device-vector-1",
+  "batch_id": "batch-vector-1",
+  "kid": "33a9c42948c167bd049d625877b1f76d",
+  "key": "9f7569477328e98c1799b20a5b9d77f868115b9a71359bdad1c75d0e05cbff50",
+  "aad": "talaria-health/1\ningest\nkid=33a9c42948c167bd049d625877b1f76d\ndev=device-vector-1\nbatch=batch-vector-1",
+  "nonce": "AAAAAAAAAAAAAAAA",
+  "plaintext": "{\"batch_id\":\"batch-vector-1\"}",
+  "ct": "kIzVA3rfzq2KjBnvUtH6WUxT2SYdS34D1dKaFC4YrvCoJgXRqwYtr1CSdboR"
+}

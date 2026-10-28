@@ -1,0 +1,14 @@
+{
+  "host_private": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "host_public": "j0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4KF8",
+  "device_private": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "device_public": "NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ",
+  "device_id": "device-vector-1",
+  "batch_id": "batch-vector-1",
+  "kid": "55d64ecbafbe58ee31a206b3e965da37",
+  "key": "8d5e00e6ad34fb6747513637e30dbc7bda0ee0bb363a301c72ca49f78d361380",
+  "aad": "talaria-location/1\ningest\nkid=55d64ecbafbe58ee31a206b3e965da37\ndev=device-vector-1\nbatch=batch-vector-1",
+  "nonce": "AAAAAAAAAAAAAAAA",
+  "plaintext": "{\"batch_id\":\"batch-vector-1\"}",
+  "ct": "GdrqeUW2LPkWyYNA1z7w20dauOeRiltuj9YEDpKydSA6vWXGoA5Lhdufv4MH"
+}

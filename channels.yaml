@@ -1,0 +1,14 @@
+# Which plugin version Talaria's release builds ask users to update to.
+#
+# Test builds ask for every version on main (plugin.yaml). Release builds
+# only show the update notice when a host is below the plugin version on
+# main when that Talaria build was made (Talaria records it at build time),
+# so a plugin merge between releases doesn't nag everyone. `stable` can
+# raise that between builds, never lower it: raise it when users of a
+# release need a plugin fix before the next Talaria release.
+# Tapping Update still installs main. Users can switch in Talaria under
+# Settings > Talaria plugin > Update notices.
+#
+# Must be a dotted number no newer than plugin.yaml's version
+# (tests/test_channels.py).
+stable: 1.0.0

@@ -1,0 +1,2023 @@
+{
+  "version": 3,
+  "about": "Shared examples for card-schema.json: normalize_cards(input) must equal output, in the plugin (tests/test_cards.py) and in the Talaria app. Regenerate only when the schema changes, and copy both files to the app together.",
+  "cases": [
+    {
+      "name": "A map with a route keeps everything valid",
+      "input": [
+        {
+          "type": "map",
+          "title": "Dinner and the show",
+          "places": [
+            {
+              "name": "Kin Khao",
+              "address": "55 Cyril Magnin St, San Francisco",
+              "lat": 37.7853,
+              "lon": -122.4089,
+              "note": "Get the khao soi."
+            },
+            {
+              "name": "Orpheum Theatre",
+              "lat": 37.779,
+              "lon": -122.4148
+            }
+          ],
+          "route": {
+            "from": 0,
+            "to": 1,
+            "mode": "walking"
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "title": "Dinner and the show",
+          "places": [
+            {
+              "name": "Kin Khao",
+              "address": "55 Cyril Magnin St, San Francisco",
+              "lat": 37.7853,
+              "lon": -122.4089,
+              "note": "Get the khao soi."
+            },
+            {
+              "name": "Orpheum Theatre",
+              "lat": 37.779,
+              "lon": -122.4148
+            }
+          ],
+          "route": {
+            "to": 1,
+            "from": 0,
+            "mode": "walking"
+          }
+        }
+      ]
+    },
+    {
+      "name": "A place card keeps only its first place",
+      "input": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A rating, hours, price or photo without a source is left out",
+      "input": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Tartine",
+              "rating": {
+                "value": 4.6
+              },
+              "hours": {
+                "text": "Open until 17:00"
+              },
+              "price": {
+                "text": "$$",
+                "source": "Yelp"
+              },
+              "photo": {
+                "url": "https://example.com/t.jpg"
+              }
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Tartine",
+              "price": {
+                "text": "$$",
+                "source": "Yelp"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A sourced rating keeps its count and link",
+      "input": [
+        {
+          "type": "places",
+          "places": [
+            {
+              "name": "Tartine",
+              "rating": {
+                "value": 4.6,
+                "count": 5120.0,
+                "source": "Google",
+                "url": "https://maps.google.com/?cid=1"
+              }
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "places",
+          "places": [
+            {
+              "name": "Tartine",
+              "rating": {
+                "value": 4.6,
+                "count": 5120,
+                "source": "Google",
+                "url": "https://maps.google.com/?cid=1"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Unknown keys are dropped",
+      "input": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "Home",
+              "lat": 1,
+              "lon": 2,
+              "phone": "+1 555",
+              "website": "https://x.test"
+            }
+          ],
+          "theme": "dark"
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "Home",
+              "lat": 1,
+              "lon": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Text is cleaned and cut",
+      "input": [
+        {
+          "type": "Places",
+          "title": "  Line\none\ttwo  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "places": [
+            {
+              "name": "\u0007Bell  "
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "places",
+          "title": "Line one two  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "places": [
+            {
+              "name": "Bell"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A card with no valid places is dropped",
+      "input": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "address": "no name"
+            }
+          ]
+        },
+        {
+          "type": "map",
+          "places": []
+        }
+      ],
+      "output": []
+    },
+    {
+      "name": "An unknown type is dropped",
+      "input": [
+        {
+          "type": "weather",
+          "places": [
+            {
+              "name": "X"
+            }
+          ]
+        }
+      ],
+      "output": []
+    },
+    {
+      "name": "Out-of-range coordinates are dropped, the place stays",
+      "input": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Nowhere",
+              "lat": 120,
+              "lon": -200
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Nowhere"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A bad URL or a rating out of range drops that fact",
+      "input": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Cafe",
+              "rating": {
+                "value": 7,
+                "source": "Yelp"
+              },
+              "hours": {
+                "text": "9-5",
+                "source": "Site",
+                "url": "javascript:alert(1)"
+              },
+              "photo": {
+                "url": "ftp://x/y.png",
+                "source": "Site"
+              }
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Cafe",
+              "hours": {
+                "text": "9-5",
+                "source": "Site"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A route is dropped when a place was dropped",
+      "input": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "lat": 1
+            },
+            {
+              "name": "C"
+            }
+          ],
+          "route": {
+            "to": 1
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "C"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A route is dropped when it names a missing place or runs from a place to itself",
+      "input": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ],
+          "route": {
+            "to": 2
+          }
+        },
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ],
+          "route": {
+            "from": 1,
+            "to": 1
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ]
+        },
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A route is dropped from a non-map card; an integer must be whole",
+      "input": [
+        {
+          "type": "places",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ],
+          "route": {
+            "to": 1
+          }
+        },
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ],
+          "route": {
+            "to": 1.5
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "places",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ]
+        },
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A route without a start keeps starting where the user is; mode case is fixed",
+      "input": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            }
+          ],
+          "route": {
+            "to": 0,
+            "mode": "TRANSIT"
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            }
+          ],
+          "route": {
+            "to": 0,
+            "mode": "transit"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Booleans aren't numbers and non-objects are dropped",
+      "input": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A",
+              "lat": true,
+              "lon": false
+            }
+          ]
+        },
+        "map",
+        null,
+        3
+      ],
+      "output": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "At most four cards and ten places",
+      "input": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "P0"
+            },
+            {
+              "name": "P1"
+            },
+            {
+              "name": "P2"
+            },
+            {
+              "name": "P3"
+            },
+            {
+              "name": "P4"
+            },
+            {
+              "name": "P5"
+            },
+            {
+              "name": "P6"
+            },
+            {
+              "name": "P7"
+            },
+            {
+              "name": "P8"
+            },
+            {
+              "name": "P9"
+            },
+            {
+              "name": "P10"
+            },
+            {
+              "name": "P11"
+            }
+          ],
+          "route": {
+            "to": 3
+          }
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C0"
+            }
+          ]
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C1"
+            }
+          ]
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C2"
+            }
+          ]
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C3"
+            }
+          ]
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C4"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "P0"
+            },
+            {
+              "name": "P1"
+            },
+            {
+              "name": "P2"
+            },
+            {
+              "name": "P3"
+            },
+            {
+              "name": "P4"
+            },
+            {
+              "name": "P5"
+            },
+            {
+              "name": "P6"
+            },
+            {
+              "name": "P7"
+            },
+            {
+              "name": "P8"
+            },
+            {
+              "name": "P9"
+            }
+          ]
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C0"
+            }
+          ]
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C1"
+            }
+          ]
+        },
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "C2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A URL that could end a Markdown link early is dropped",
+      "input": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Tartine",
+              "rating": {
+                "value": 4.5,
+                "source": "Google",
+                "url": "https://a.example/x?q=1)[click](javascript:alert(1))"
+              },
+              "hours": {
+                "text": "8–5",
+                "source": "Yelp",
+                "url": "https://yelp.example/biz/tartine"
+              },
+              "photo": {
+                "url": "https://img.example/a b.jpg",
+                "source": "Yelp"
+              }
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "place",
+          "places": [
+            {
+              "name": "Tartine",
+              "rating": {
+                "value": 4.5,
+                "source": "Google"
+              },
+              "hours": {
+                "text": "8–5",
+                "source": "Yelp",
+                "url": "https://yelp.example/biz/tartine"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A title keeps its brackets and a cycling route is kept",
+      "input": [
+        {
+          "type": "map",
+          "title": "[x](https://evil.example) **bold**",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ],
+          "route": {
+            "from": 0,
+            "to": 1,
+            "mode": "cycling"
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "title": "[x](https://evil.example) **bold**",
+          "places": [
+            {
+              "name": "A"
+            },
+            {
+              "name": "B"
+            }
+          ],
+          "route": {
+            "to": 1,
+            "from": 0,
+            "mode": "cycling"
+          }
+        }
+      ]
+    },
+    {
+      "name": "A stats card keeps its numbers and source, and nothing of a map",
+      "input": [
+        {
+          "type": "stats",
+          "title": "This week",
+          "source": {
+            "name": "Health",
+            "url": "https://example.com/health",
+            "extra": 1
+          },
+          "stats": [
+            {
+              "label": "Steps",
+              "value": "58,204",
+              "detail": "daily average 8,315",
+              "change": "+12%",
+              "trend": "Up",
+              "tone": "good",
+              "spark": [
+                7012,
+                8120,
+                9433,
+                6022,
+                8811,
+                9302,
+                9504
+              ]
+            },
+            {
+              "label": "Sleep",
+              "value": "7 h 05 min",
+              "trend": "flat"
+            }
+          ],
+          "places": [
+            {
+              "name": "Gym"
+            }
+          ],
+          "route": {
+            "to": 0
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "stats",
+          "title": "This week",
+          "source": {
+            "name": "Health",
+            "url": "https://example.com/health"
+          },
+          "stats": [
+            {
+              "label": "Steps",
+              "value": "58,204",
+              "detail": "daily average 8,315",
+              "change": "+12%",
+              "trend": "up",
+              "tone": "good",
+              "spark": [
+                7012,
+                8120,
+                9433,
+                6022,
+                8811,
+                9302,
+                9504
+              ]
+            },
+            {
+              "label": "Sleep",
+              "value": "7 h 05 min",
+              "trend": "flat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A stats card without stats is dropped; a one-value spark and an unknown trend are left out",
+      "input": [
+        {
+          "type": "stats",
+          "title": "Nothing"
+        },
+        {
+          "type": "stats",
+          "stats": [
+            {
+              "label": "Portfolio",
+              "value": "$12.4k",
+              "spark": [
+                3
+              ],
+              "trend": "sideways",
+              "tone": "great"
+            },
+            {
+              "label": "No value"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "stats",
+          "stats": [
+            {
+              "label": "Portfolio",
+              "value": "$12.4k"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A chart keeps the series that have one value per label",
+      "input": [
+        {
+          "type": "chart",
+          "title": "Sales",
+          "source": {
+            "name": "Shopify"
+          },
+          "chart": {
+            "kind": "BAR",
+            "unit": "USD",
+            "labels": [
+              "Mon",
+              "Tue",
+              "Wed"
+            ],
+            "series": [
+              {
+                "name": "This week",
+                "values": [
+                  120,
+                  95.5,
+                  140
+                ]
+              },
+              {
+                "name": "Short",
+                "values": [
+                  1,
+                  2
+                ]
+              },
+              {
+                "name": "Last week",
+                "values": [
+                  100,
+                  110,
+                  90
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "chart",
+          "title": "Sales",
+          "source": {
+            "name": "Shopify"
+          },
+          "chart": {
+            "kind": "bar",
+            "labels": [
+              "Mon",
+              "Tue",
+              "Wed"
+            ],
+            "series": [
+              {
+                "name": "This week",
+                "values": [
+                  120,
+                  95.5,
+                  140
+                ]
+              },
+              {
+                "name": "Last week",
+                "values": [
+                  100,
+                  110,
+                  90
+                ]
+              }
+            ],
+            "unit": "USD"
+          }
+        }
+      ]
+    },
+    {
+      "name": "A pie keeps its first series, and a negative slice drops it",
+      "input": [
+        {
+          "type": "chart",
+          "chart": {
+            "kind": "pie",
+            "labels": [
+              "Rent",
+              "Food"
+            ],
+            "series": [
+              {
+                "name": "Spending",
+                "values": [
+                  1200,
+                  450
+                ]
+              },
+              {
+                "values": [
+                  1,
+                  1
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "type": "chart",
+          "chart": {
+            "kind": "pie",
+            "labels": [
+              "A",
+              "B"
+            ],
+            "series": [
+              {
+                "values": [
+                  5,
+                  -1
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "chart",
+          "chart": {
+            "kind": "pie",
+            "labels": [
+              "Rent",
+              "Food"
+            ],
+            "series": [
+              {
+                "name": "Spending",
+                "values": [
+                  1200,
+                  450
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "A chart whose series all miss labels is dropped",
+      "input": [
+        {
+          "type": "chart",
+          "chart": {
+            "kind": "line",
+            "labels": [
+              "Jan",
+              "Feb"
+            ],
+            "series": [
+              {
+                "values": [
+                  1,
+                  2,
+                  3
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "output": []
+    },
+    {
+      "name": "A forecast keeps what it was given, with its source",
+      "input": [
+        {
+          "type": "weather",
+          "title": "Berlin today",
+          "source": {
+            "name": "Open-Meteo",
+            "url": "https://open-meteo.com/"
+          },
+          "weather": {
+            "place": "Berlin",
+            "unit": "c",
+            "now": {
+              "temp": 18.5,
+              "condition": "Partly_Cloudy",
+              "text": "Feels like 17"
+            },
+            "hours": [
+              {
+                "time": "14:00",
+                "temp": 19,
+                "condition": "cloudy",
+                "precip": 20
+              },
+              {
+                "time": "15:00",
+                "temp": 20,
+                "precip": 35.5
+              }
+            ],
+            "days": [
+              {
+                "day": "Today",
+                "low": 12,
+                "high": 21,
+                "condition": "rain",
+                "precip": 60
+              },
+              {
+                "day": "Tue",
+                "low": 25,
+                "high": 20,
+                "condition": "clear"
+              },
+              {
+                "day": "Wed",
+                "low": 10,
+                "high": 16,
+                "condition": "tornado"
+              }
+            ]
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "weather",
+          "title": "Berlin today",
+          "source": {
+            "name": "Open-Meteo",
+            "url": "https://open-meteo.com/"
+          },
+          "weather": {
+            "place": "Berlin",
+            "unit": "C",
+            "now": {
+              "temp": 18.5,
+              "condition": "partly_cloudy",
+              "text": "Feels like 17"
+            },
+            "hours": [
+              {
+                "time": "14:00",
+                "temp": 19,
+                "condition": "cloudy",
+                "precip": 20
+              },
+              {
+                "time": "15:00",
+                "temp": 20
+              }
+            ],
+            "days": [
+              {
+                "day": "Today",
+                "low": 12,
+                "high": 21,
+                "condition": "rain",
+                "precip": 60
+              },
+              {
+                "day": "Wed",
+                "low": 10,
+                "high": 16
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "A forecast without a source or anything to show is dropped",
+      "input": [
+        {
+          "type": "weather",
+          "weather": {
+            "unit": "F",
+            "now": {
+              "temp": 70,
+              "condition": "clear"
+            }
+          }
+        },
+        {
+          "type": "weather",
+          "source": {
+            "name": "NWS"
+          },
+          "weather": {
+            "unit": "F",
+            "place": "Austin"
+          }
+        },
+        {
+          "type": "weather",
+          "source": {
+            "name": "NWS"
+          },
+          "weather": {
+            "unit": "F",
+            "days": [
+              {
+                "day": "Mon",
+                "low": 80,
+                "high": 70
+              }
+            ]
+          }
+        },
+        {
+          "type": "weather",
+          "source": {
+            "url": "https://weather.gov"
+          },
+          "weather": {
+            "unit": "F",
+            "now": {
+              "temp": 70,
+              "condition": "clear"
+            }
+          }
+        }
+      ],
+      "output": []
+    },
+    {
+      "name": "An empty hours or days list counts as nothing to show",
+      "input": [
+        {
+          "type": "weather",
+          "source": {
+            "name": "NWS"
+          },
+          "weather": {
+            "unit": "F",
+            "hours": [],
+            "days": [
+              {
+                "day": "Mon",
+                "low": 80,
+                "high": 70
+              }
+            ]
+          }
+        },
+        {
+          "type": "weather",
+          "source": {
+            "name": "NWS"
+          },
+          "weather": {
+            "unit": "F",
+            "hours": [],
+            "days": [
+              {
+                "day": "Mon",
+                "low": 60,
+                "high": 70
+              }
+            ]
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "weather",
+          "source": {
+            "name": "NWS"
+          },
+          "weather": {
+            "unit": "F",
+            "days": [
+              {
+                "day": "Mon",
+                "low": 60,
+                "high": 70
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "A comparison recommends one option at most",
+      "input": [
+        {
+          "type": "comparison",
+          "title": "Which phone",
+          "source": {
+            "name": "Apple"
+          },
+          "options": [
+            {
+              "name": "iPhone 17",
+              "summary": "The sensible pick.",
+              "facts": [
+                {
+                  "label": "Price",
+                  "value": "$799"
+                },
+                {
+                  "label": "Battery"
+                }
+              ],
+              "pros": [
+                "Great value",
+                ""
+              ],
+              "cons": [
+                "60 Hz"
+              ],
+              "recommended": true
+            },
+            {
+              "name": "iPhone 17 Pro",
+              "facts": [
+                {
+                  "label": "Price",
+                  "value": "$1,099"
+                }
+              ],
+              "recommended": true
+            },
+            {
+              "name": "iPhone Air",
+              "recommended": false
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "comparison",
+          "title": "Which phone",
+          "source": {
+            "name": "Apple"
+          },
+          "options": [
+            {
+              "name": "iPhone 17",
+              "summary": "The sensible pick.",
+              "facts": [
+                {
+                  "label": "Price",
+                  "value": "$799"
+                }
+              ],
+              "pros": [
+                "Great value"
+              ],
+              "cons": [
+                "60 Hz"
+              ],
+              "recommended": true
+            },
+            {
+              "name": "iPhone 17 Pro",
+              "facts": [
+                {
+                  "label": "Price",
+                  "value": "$1,099"
+                }
+              ]
+            },
+            {
+              "name": "iPhone Air",
+              "recommended": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A comparison needs two options",
+      "input": [
+        {
+          "type": "comparison",
+          "options": [
+            {
+              "name": "Only one"
+            },
+            {
+              "summary": "no name"
+            }
+          ]
+        }
+      ],
+      "output": []
+    },
+    {
+      "name": "Steps keep what's needed and their timers",
+      "input": [
+        {
+          "type": "steps",
+          "title": "Soft-boiled eggs",
+          "needs": [
+            "2 eggs",
+            "A small pot",
+            ""
+          ],
+          "steps": [
+            {
+              "text": "Bring water to a boil."
+            },
+            {
+              "text": "Lower the eggs in and simmer.",
+              "timer": 390
+            },
+            {
+              "text": "Cool them in cold water.",
+              "timer": 0
+            },
+            {
+              "text": "Wait a day",
+              "timer": 86401
+            },
+            {
+              "timer": 60
+            }
+          ],
+          "options": [
+            {
+              "name": "x"
+            },
+            {
+              "name": "y"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "steps",
+          "title": "Soft-boiled eggs",
+          "needs": [
+            "2 eggs",
+            "A small pot"
+          ],
+          "steps": [
+            {
+              "text": "Bring water to a boil."
+            },
+            {
+              "text": "Lower the eggs in and simmer.",
+              "timer": 390
+            },
+            {
+              "text": "Cool them in cold water."
+            },
+            {
+              "text": "Wait a day"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Needs and a source stay off a map; steps need steps",
+      "input": [
+        {
+          "type": "map",
+          "source": {
+            "name": "Hermes"
+          },
+          "needs": [
+            "x"
+          ],
+          "places": [
+            {
+              "name": "A"
+            }
+          ]
+        },
+        {
+          "type": "steps",
+          "needs": [
+            "flour"
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "map",
+          "places": [
+            {
+              "name": "A"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Media keeps its items, and an image has no length or artwork",
+      "input": [
+        {
+          "type": "media",
+          "title": "Apollo 11",
+          "source": {
+            "name": "NASA",
+            "url": "https://nasa.gov"
+          },
+          "media": [
+            {
+              "kind": "IMAGE",
+              "url": "https://a.test/moon.jpg",
+              "title": "Moon",
+              "duration": 5,
+              "artwork": "https://a.test/x.jpg",
+              "page": "https://a.test/moon"
+            },
+            {
+              "kind": "video",
+              "url": "https://a.test/launch.m3u8",
+              "duration": 300,
+              "artwork": "https://a.test/launch.jpg",
+              "by": "NASA TV"
+            },
+            {
+              "kind": "audio",
+              "url": "https://a.test/talk.mp3",
+              "caption": "The landing"
+            },
+            {
+              "kind": "podcast",
+              "url": "https://a.test/p.mp3"
+            },
+            {
+              "kind": "image",
+              "url": "javascript:alert(1)"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "media",
+          "title": "Apollo 11",
+          "source": {
+            "name": "NASA",
+            "url": "https://nasa.gov"
+          },
+          "media": [
+            {
+              "kind": "image",
+              "url": "https://a.test/moon.jpg",
+              "title": "Moon",
+              "page": "https://a.test/moon"
+            },
+            {
+              "kind": "video",
+              "url": "https://a.test/launch.m3u8",
+              "by": "NASA TV",
+              "duration": 300,
+              "artwork": "https://a.test/launch.jpg"
+            },
+            {
+              "kind": "audio",
+              "url": "https://a.test/talk.mp3",
+              "caption": "The landing"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Media without a source is dropped",
+      "input": [
+        {
+          "type": "media",
+          "media": [
+            {
+              "kind": "image",
+              "url": "https://a.test/a.jpg"
+            }
+          ]
+        },
+        {
+          "type": "media",
+          "source": {
+            "name": "Unsplash"
+          },
+          "media": [
+            {
+              "kind": "image",
+              "url": "not a url"
+            }
+          ]
+        }
+      ],
+      "output": []
+    },
+    {
+      "name": "A contact keeps only a phone and an email that read as one",
+      "input": [
+        {
+          "type": "contact",
+          "source": {
+            "name": "Yelp"
+          },
+          "people": [
+            {
+              "name": "Dr Lee",
+              "detail": "Dentist",
+              "phone": "+1 (415) 555-0100",
+              "email": "front@lee.example",
+              "url": "https://lee.example",
+              "address": "1 Main St",
+              "note": "Open Saturdays",
+              "photo": {
+                "url": "https://a.test/lee.jpg",
+                "source": "Yelp"
+              }
+            },
+            {
+              "name": "Sam",
+              "phone": "12",
+              "email": "sam at home"
+            },
+            {
+              "name": "Ana",
+              "phone": "tel:+44 20 7946 0000",
+              "email": "ana@example.com, bo@example.com"
+            },
+            {
+              "name": "Bo",
+              "phone": "+44 20 7946 0000 0000 0000 0000",
+              "email": "bo@example",
+              "photo": {
+                "url": "https://a.test/bo.jpg"
+              }
+            },
+            {
+              "detail": "No name"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "contact",
+          "source": {
+            "name": "Yelp"
+          },
+          "people": [
+            {
+              "name": "Dr Lee",
+              "detail": "Dentist",
+              "phone": "+1 (415) 555-0100",
+              "email": "front@lee.example",
+              "url": "https://lee.example",
+              "address": "1 Main St",
+              "note": "Open Saturdays",
+              "photo": {
+                "url": "https://a.test/lee.jpg",
+                "source": "Yelp"
+              }
+            },
+            {
+              "name": "Sam"
+            },
+            {
+              "name": "Ana"
+            },
+            {
+              "name": "Bo"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "An email that could add a recipient or prefill a message is dropped",
+      "input": [
+        {
+          "type": "contact",
+          "people": [
+            {
+              "name": "Ana",
+              "email": "first.last+tag@example.co.uk"
+            },
+            {
+              "name": "Bo",
+              "email": "bo@example.com?subject=Hi&body=Call%20me"
+            },
+            {
+              "name": "Cy",
+              "email": "cy@example.com?cc=eve%40evil.example"
+            },
+            {
+              "name": "Di",
+              "email": "di@example.com#top"
+            },
+            {
+              "name": "Ed",
+              "email": "ed%40evil.example@example.com"
+            },
+            {
+              "name": "Flo",
+              "email": "flo&co=x@example.com"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "contact",
+          "people": [
+            {
+              "name": "Ana",
+              "email": "first.last+tag@example.co.uk"
+            },
+            {
+              "name": "Bo"
+            },
+            {
+              "name": "Cy"
+            },
+            {
+              "name": "Di"
+            },
+            {
+              "name": "Ed"
+            },
+            {
+              "name": "Flo"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A status keeps its state, and a live name stays on the first card that has it",
+      "input": [
+        {
+          "type": "status",
+          "live": "order-4411",
+          "title": "Your order",
+          "source": {
+            "name": "UPS"
+          },
+          "status": {
+            "state": "Out for delivery",
+            "phase": "Active",
+            "progress": 0.75,
+            "eta": "14:20",
+            "detail": "3 stops away",
+            "milestones": [
+              {
+                "label": "Ordered",
+                "done": true
+              },
+              {
+                "label": "Shipped",
+                "done": true
+              },
+              {
+                "label": "Delivered"
+              },
+              {
+                "done": true
+              }
+            ]
+          }
+        },
+        {
+          "type": "status",
+          "live": "order-4411",
+          "status": {
+            "state": "Delivered",
+            "phase": "done",
+            "progress": 1.5
+          }
+        },
+        {
+          "type": "stats",
+          "live": "score",
+          "stats": [
+            {
+              "label": "Arsenal",
+              "value": "2"
+            }
+          ]
+        },
+        {
+          "type": "status",
+          "status": {
+            "phase": "done"
+          }
+        }
+      ],
+      "output": [
+        {
+          "type": "status",
+          "title": "Your order",
+          "live": "order-4411",
+          "source": {
+            "name": "UPS"
+          },
+          "status": {
+            "state": "Out for delivery",
+            "phase": "active",
+            "progress": 0.75,
+            "detail": "3 stops away",
+            "eta": "14:20",
+            "milestones": [
+              {
+                "label": "Ordered",
+                "done": true
+              },
+              {
+                "label": "Shipped",
+                "done": true
+              },
+              {
+                "label": "Delivered"
+              }
+            ]
+          }
+        },
+        {
+          "type": "status",
+          "status": {
+            "state": "Delivered",
+            "phase": "done"
+          }
+        },
+        {
+          "type": "stats",
+          "live": "score",
+          "stats": [
+            {
+              "label": "Arsenal",
+              "value": "2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A live name goes on any card type",
+      "input": [
+        {
+          "type": "place",
+          "live": "pickup",
+          "places": [
+            {
+              "name": "Gate 4",
+              "lat": 51.47,
+              "lon": -0.45
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "place",
+          "live": "pickup",
+          "places": [
+            {
+              "name": "Gate 4",
+              "lat": 51.47,
+              "lon": -0.45
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Media keeps only https items and artwork, and is dropped with none left",
+      "input": [
+        {
+          "type": "media",
+          "source": {
+            "name": "Archive"
+          },
+          "media": [
+            {
+              "kind": "audio",
+              "url": "http://example.org/a.mp3",
+              "title": "Plain http"
+            },
+            {
+              "kind": "video",
+              "url": "HTTPS://example.org/b.mp4",
+              "artwork": "http://example.org/b.jpg",
+              "duration": 60
+            }
+          ]
+        },
+        {
+          "type": "media",
+          "source": {
+            "name": "Archive"
+          },
+          "media": [
+            {
+              "kind": "image",
+              "url": "http://example.org/c.jpg"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "media",
+          "source": {
+            "name": "Archive"
+          },
+          "media": [
+            {
+              "kind": "video",
+              "url": "HTTPS://example.org/b.mp4",
+              "duration": 60
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A place's or person's photo is kept only when its url is https",
+      "input": [
+        {
+          "type": "places",
+          "places": [
+            {
+              "name": "Kin Khao",
+              "photo": {
+                "url": "http://img.example/kin.jpg",
+                "source": "Yelp"
+              }
+            },
+            {
+              "name": "Tartine",
+              "photo": {
+                "url": "https://img.example/tartine.jpg",
+                "source": "Yelp",
+                "page_url": "http://yelp.example/biz/tartine"
+              }
+            }
+          ]
+        },
+        {
+          "type": "contact",
+          "people": [
+            {
+              "name": "Dr Lee",
+              "photo": {
+                "url": "http://a.test/lee.jpg",
+                "source": "Yelp"
+              }
+            },
+            {
+              "name": "Bo",
+              "photo": {
+                "url": "https://a.test/bo.jpg",
+                "source": "Yelp"
+              }
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "places",
+          "places": [
+            {
+              "name": "Kin Khao"
+            },
+            {
+              "name": "Tartine",
+              "photo": {
+                "url": "https://img.example/tartine.jpg",
+                "source": "Yelp",
+                "page_url": "http://yelp.example/biz/tartine"
+              }
+            }
+          ]
+        },
+        {
+          "type": "contact",
+          "people": [
+            {
+              "name": "Dr Lee"
+            },
+            {
+              "name": "Bo",
+              "photo": {
+                "url": "https://a.test/bo.jpg",
+                "source": "Yelp"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "A person's message is kept only with their phone",
+      "input": [
+        {
+          "type": "contact",
+          "people": [
+            {
+              "name": "Mei",
+              "detail": "Wife",
+              "phone": "+86 139 6261 8677",
+              "message": "Landed safe, see you soon 么么哒\nlove you"
+            },
+            {
+              "name": "Bo",
+              "email": "bo@example.com",
+              "message": "Running late"
+            },
+            {
+              "name": "Cy",
+              "phone": "tel:12",
+              "message": "Hi"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "type": "contact",
+          "people": [
+            {
+              "name": "Mei",
+              "detail": "Wife",
+              "phone": "+86 139 6261 8677",
+              "message": "Landed safe, see you soon 么么哒 love you"
+            },
+            {
+              "name": "Bo",
+              "email": "bo@example.com"
+            },
+            {
+              "name": "Cy"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

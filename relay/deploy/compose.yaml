@@ -1,0 +1,57 @@
+name: talaria-relay
+
+services:
+  relay:
+    build:
+      context: ..
+    container_name: talaria-relay
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 9120
+      PUBLIC_URL: ${PUBLIC_URL}
+      DATA_PATH: /var/lib/talaria-relay/relay.json
+      # The Firebase service account key goes at secrets/fcm/service-account.json.
+      FCM_PACKAGES: ${FCM_PACKAGES}
+      FCM_SERVICE_ACCOUNT_PATH: /run/secrets/fcm/service-account.json
+      TRUST_PROXY: 1
+      RELAY_MAX_INSTALLATIONS: ${RELAY_MAX_INSTALLATIONS:-}
+      RELAY_MAX_GATEWAYS_PER_INSTALLATION: ${RELAY_MAX_GATEWAYS_PER_INSTALLATION:-}
+      RELAY_MAX_EVENT_IDS_PER_INSTALLATION: ${RELAY_MAX_EVENT_IDS_PER_INSTALLATION:-}
+      RELAY_MAX_EVENT_IDS: ${RELAY_MAX_EVENT_IDS:-}
+      RELAY_MAX_ACTIVE_DECISIONS: ${RELAY_MAX_ACTIVE_DECISIONS:-}
+      RELAY_MAX_RETAINED_DECISIONS: ${RELAY_MAX_RETAINED_DECISIONS:-}
+      RELAY_REGISTRATIONS_PER_MINUTE: ${RELAY_REGISTRATIONS_PER_MINUTE:-}
+      RELAY_TOKEN_CHALLENGES_PER_MINUTE: ${RELAY_TOKEN_CHALLENGES_PER_MINUTE:-}
+      RELAY_TOKEN_PROOF: ${RELAY_TOKEN_PROOF:-}
+      RELAY_EVENTS_PER_MINUTE: ${RELAY_EVENTS_PER_MINUTE:-}
+      RELAY_DEVICE_CHANGES_PER_MINUTE: ${RELAY_DEVICE_CHANGES_PER_MINUTE:-}
+      RELAY_DECISION_ACTIONS_PER_MINUTE: ${RELAY_DECISION_ACTIONS_PER_MINUTE:-}
+      RELAY_REVOCATIONS_PER_MINUTE: ${RELAY_REVOCATIONS_PER_MINUTE:-}
+      RELAY_CALLS_PER_INSTALLATION_PER_DAY: ${RELAY_CALLS_PER_INSTALLATION_PER_DAY:-}
+      RELAY_MAX_LIVE_ACTIVITIES: ${RELAY_MAX_LIVE_ACTIVITIES:-}
+      RELAY_MAX_LIVE_ACTIVITIES_PER_INSTALLATION: ${RELAY_MAX_LIVE_ACTIVITIES_PER_INSTALLATION:-}
+      RELAY_LIVE_ACTIVITY_REGISTRATIONS_PER_MINUTE: ${RELAY_LIVE_ACTIVITY_REGISTRATIONS_PER_MINUTE:-}
+      RELAY_LIVE_ACTIVITY_UPDATES_PER_MINUTE: ${RELAY_LIVE_ACTIVITY_UPDATES_PER_MINUTE:-}
+    volumes:
+      # Create ./data owned by the image's node user (uid 1000) before the
+      # first start: a directory Docker creates for the mount is root's, and
+      # the relay exits when it can't write there.
+      - ./data:/var/lib/talaria-relay
+      - ./secrets/fcm:/run/secrets/fcm:ro
+    # Reachable only from this machine: put an HTTPS reverse proxy or tunnel in front.
+    ports:
+      - "127.0.0.1:9120:9120"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9120/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

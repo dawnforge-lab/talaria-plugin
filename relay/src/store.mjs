@@ -1,0 +1,837 @@
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { chmodSync, closeSync, constants, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { EventLedger } from './event-ledger.mjs';
+import { DEFAULT_STORE_LIMITS } from './limits.mjs';
+
+const TEMPORARY_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
+
+const defaultPreferences = Object.freeze({
+  enabled: true,
+  approval_needed: true,
+  input_needed: true,
+  response_ready: true,
+  turn_failed: true,
+  background_task_finished: true,
+  // "Hermes wants to talk" (#449); the host's own setting decides first.
+  call_requested: true,
+  // Calendar and reminder changes Hermes asks the phone to make
+  // (phone.changes), both the notification and the silent wake.
+  phone_changes: true,
+  completion_sound: true,
+  // Sound for the notifications that wait on the user (approval.needed,
+  // input.needed, call.requested). Approvals time out and fail closed, so a silent banner
+  // is easy to miss; default on, with its own opt-out.
+  attention_sound: true,
+  show_previews: false,
+  // Dedicated opt-out for structured decision content (answerable approval
+  // cards) in the push payload. Deliberately independent of show_previews:
+  // the feature's audience is exactly the approval-gate crowd, so cards
+  // default on and privacy-focused users can turn just this off.
+  decision_cards: true,
+});
+
+// Metadata-only changes (a gateway's last-seen time and plugin version) are
+// written at most this often instead of on every event. Each write is still
+// the whole file, so on a busy relay this is one full rewrite per interval.
+const DEFAULT_SAVE_DELAY_MS = 5_000;
+
+export class RelayStore {
+  constructor(path, limits = {}, { saveDelayMs = DEFAULT_SAVE_DELAY_MS } = {}) {
+    this.path = path;
+    limits ??= {};
+    this.limits = {
+      maxInstallations: limits.maxInstallations ?? DEFAULT_STORE_LIMITS.maxInstallations,
+      maxGatewaysPerInstallation: limits.maxGatewaysPerInstallation ?? DEFAULT_STORE_LIMITS.maxGatewaysPerInstallation,
+      maxEventIdsPerInstallation: limits.maxEventIdsPerInstallation ?? DEFAULT_STORE_LIMITS.maxEventIdsPerInstallation,
+      maxGlobalEventIds: limits.maxGlobalEventIds ?? DEFAULT_STORE_LIMITS.maxGlobalEventIds,
+    };
+    for (const limit of Object.values(this.limits)) {
+      if (!Number.isSafeInteger(limit) || limit <= 0) throw new TypeError('Storage limits must be positive integers.');
+    }
+    this.decisionLimits = {
+      activeGlobal: limits.activeGlobal ?? DEFAULT_STORE_LIMITS.activeGlobal,
+      activePerInstallation: limits.activePerInstallation ?? DEFAULT_STORE_LIMITS.activePerInstallation,
+      retainedGlobal: limits.retainedGlobal ?? DEFAULT_STORE_LIMITS.retainedGlobal,
+      retainedPerInstallation: limits.retainedPerInstallation ?? DEFAULT_STORE_LIMITS.retainedPerInstallation,
+    };
+    for (const limit of Object.values(this.decisionLimits)) {
+      if (!Number.isSafeInteger(limit) || limit <= 0) throw new TypeError('Decision limits must be positive integers.');
+    }
+    this.saveDelayMs = saveDelayMs;
+    this.saveTimer = undefined;
+    this.dirty = false;
+    this.events = new EventLedger({ perInstallation: this.limits.maxEventIdsPerInstallation, total: this.limits.maxGlobalEventIds });
+    this.data = { version: 1, installations: {}, pairings: {}, pendingDecisions: {} };
+    this.load();
+  }
+
+  load() {
+    if (!existsSync(this.path)) return;
+    const parsed = JSON.parse(readFileSync(this.path, 'utf8'));
+    if (parsed?.version !== 1 || typeof parsed.installations !== 'object') throw new Error('Unsupported relay data format.');
+    this.data = { version: 1, installations: parsed.installations ?? {}, pairings: parsed.pairings ?? {}, pendingDecisions: parsed.pendingDecisions ?? {} };
+    // Older files persisted event IDs; keep them for dedupe, and the next
+    // save leaves them out of the file.
+    this.events.importPersisted(parsed.eventIds);
+    this.sanitizePersistedDashboardIds();
+    this.upgradeLegacyPendingDecisions();
+    this.prune();
+  }
+
+  // Bounded upgrade window: relays that ran the pre-scoping layout parked
+  // decisions under the BARE request id with no `id` field on the record.
+  // Ownership is recoverable from the record's stored installationId and
+  // gatewayId, so re-key those decisions into the scoped layout at load —
+  // an otherwise-live pre-upgrade decision stays answerable across the
+  // deploy instead of going unreachable. If the scoped target already
+  // exists (a post-upgrade re-park of the same logical id), the newer
+  // scoped record is authoritative and the legacy duplicate retires, so a
+  // legacy record can never create cross-gateway ambiguity.
+  upgradeLegacyPendingDecisions() {
+    let changed = false;
+    for (const [key, decision] of Object.entries(this.data.pendingDecisions ?? {})) {
+      if (!decision || typeof decision !== 'object') continue;
+      // New-layout records carry `id`; legacy records are keyed by the bare
+      // request id and carry only the denormalized ownership fields.
+      if (decision.id !== undefined) continue;
+      if (typeof decision.installationId !== 'string' || typeof decision.gatewayId !== 'string') continue;
+      const scopedKey = RelayStore.decisionKey(decision.installationId, decision.gatewayId, key);
+      const existing = this.data.pendingDecisions[scopedKey];
+      if (!existing) {
+        decision.id = key;
+        this.data.pendingDecisions[scopedKey] = decision;
+      }
+      delete this.data.pendingDecisions[key];
+      changed = true;
+    }
+    if (changed) this.save();
+  }
+
+  // Rehydrated dashboard bindings are re-canonicalized: persisted state can
+  // predate validation or be hand-edited, and an arbitrary persisted string
+  // must never flow into a push's `dashboard_id`. Policy is fail-closed by
+  // DROPPING the invalid binding (the record survives unbound — the legacy
+  // shape — rather than the load rejecting and the relay refusing to boot
+  // over one corrupted field); records with no binding pass through
+  // untouched.
+  sanitizePersistedDashboardIds() {
+    let changed = false;
+    for (const pairing of Object.values(this.data.pairings ?? {})) {
+      if (!pairing || typeof pairing !== 'object') continue;
+      if (pairing.dashboardId === undefined) continue;
+      try {
+        const canonical = normalizeDashboardId(pairing.dashboardId);
+        if (pairing.dashboardId !== canonical) changed = true;
+        pairing.dashboardId = canonical;
+      } catch {
+        delete pairing.dashboardId;
+        changed = true;
+      }
+    }
+    for (const installation of Object.values(this.data.installations ?? {})) {
+      // A malformed data file must not throw merely while iterating: a null
+      // or non-object installation/gateway record has no bindings to heal.
+      if (!installation || typeof installation !== 'object' || !installation.gateways || typeof installation.gateways !== 'object') {
+        continue;
+      }
+      for (const gateway of Object.values(installation.gateways)) {
+        if (!gateway || typeof gateway !== 'object') continue;
+        if (gateway.dashboardId === undefined) continue;
+        try {
+          const canonical = normalizeDashboardId(gateway.dashboardId);
+          if (gateway.dashboardId !== canonical) changed = true;
+          gateway.dashboardId = canonical;
+        } catch {
+          delete gateway.dashboardId;
+          changed = true;
+        }
+      }
+    }
+    // Persist the repaired form through the existing atomic save so the
+    // repair is durable rather than repeated on every load.
+    if (changed) this.save();
+  }
+
+  save() {
+    this.dirty = true;
+    const temporary = `${this.path}.${process.pid}.tmp`;
+    try {
+      mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+      // Never follow a symlink planted at the tmp name, as the Python writers.
+      const fd = openSync(temporary, TEMPORARY_FLAGS, 0o600);
+      try {
+        writeFileSync(fd, `${JSON.stringify(this.data)}\n`, { encoding: 'utf8' });
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      chmodSync(temporary, 0o600);
+      renameSync(temporary, this.path);
+      if (process.platform !== 'win32') {
+        const directory = openSync(dirname(this.path), 'r');
+        try {
+          fsyncSync(directory);
+        } finally {
+          closeSync(directory);
+        }
+      }
+    } catch (error) {
+      // A partial file would hold space a full disk needs back.
+      try { unlinkSync(temporary); } catch { /* Preserve the original failure. */ }
+      // Keep the change pending and try again after the save delay.
+      this.saveSoon();
+      throw error;
+    }
+    this.dirty = false;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+  }
+
+  // Deferred save for metadata a crash may lose without harm. Any full save
+  // in the meantime writes it too.
+  saveSoon() {
+    this.dirty = true;
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined;
+      try {
+        this.flush();
+      } catch (error) {
+        console.error(JSON.stringify({ level: 'error', message: 'deferred relay save failed', error: error instanceof Error ? error.message : String(error) }));
+      }
+    }, this.saveDelayMs);
+    this.saveTimer.unref?.();
+  }
+
+  flush() {
+    if (this.dirty) this.save();
+  }
+
+  // `deviceToken` is the phone's FCM token and `bundleId` the app's package
+  // name, which every push to it is restricted to.
+  createInstallation({ bundleId, deviceToken, preferences }) {
+    this.assertInstallationCapacity();
+    const id = randomUUID();
+    const deviceSecret = randomBytes(32).toString('base64url');
+    const now = new Date().toISOString();
+    this.data.installations[id] = {
+      id,
+      bundleId,
+      deviceToken,
+      deviceSecretHash: hashSecret(deviceSecret),
+      gateways: {},
+      active: true,
+      preferences: normalizePreferences(preferences),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.save();
+    return { installation: publicInstallation(this.data.installations[id]), deviceSecret };
+  }
+
+  assertInstallationCapacity() {
+    if (Object.keys(this.data.installations).length < this.limits.maxInstallations) return true;
+    if (!this.reclaimInactiveInstallation()) throw capacityError('installation_limit_reached');
+    return true;
+  }
+
+  // Refuses only a relay full of active installations; reclaiming waits for
+  // a registration that will go through (assertInstallationCapacity).
+  assertInstallationRoom() {
+    if (Object.keys(this.data.installations).length < this.limits.maxInstallations) return true;
+    if (Object.values(this.data.installations).some((installation) => installation && typeof installation === 'object' && !installation.active)) return true;
+    throw capacityError('installation_limit_reached');
+  }
+
+  // A full relay makes room by forgetting the longest-inactive installation
+  // (#142). Inactive is final: its credential no longer authenticates and
+  // its hosts' events are refused, so the record only takes a slot.
+  reclaimInactiveInstallation() {
+    let oldest;
+    for (const installation of Object.values(this.data.installations)) {
+      if (!installation || typeof installation !== 'object' || installation.active) continue;
+      if (!oldest || String(installation.updatedAt ?? '') < String(oldest.updatedAt ?? '')) oldest = installation;
+    }
+    if (!oldest) return false;
+    delete this.data.installations[oldest.id];
+    for (const [key, pairing] of Object.entries(this.data.pairings)) {
+      if (pairing?.installationId === oldest.id) delete this.data.pairings[key];
+    }
+    for (const [key, decision] of Object.entries(this.data.pendingDecisions ?? {})) {
+      if (decision?.installationId === oldest.id) delete this.data.pendingDecisions[key];
+    }
+    this.save();
+    this.onReclaim?.(oldest.id);
+    return true;
+  }
+
+  // A phone that proved it holds `deviceToken` replaces any earlier
+  // registration of it: those are the same phone's stale records.
+  retireOtherInstallationsWithDeviceToken(deviceToken, exceptId) {
+    const retired = [];
+    for (const installation of Object.values(this.data.installations)) {
+      if (installation?.active && installation.id !== exceptId && installation.deviceToken === deviceToken) {
+        this.deactivateInstallation(installation.id);
+        retired.push(installation.id);
+      }
+    }
+    return retired;
+  }
+
+  // The installation record, or null once it's gone or deactivated.
+  activeInstallation(id) {
+    const installation = this.data.installations[id];
+    return installation?.active ? installation : null;
+  }
+
+  authenticate(id, secret, scope) {
+    const installation = this.data.installations[id];
+    if (!installation?.active || !secret) return null;
+    const expected = scope === 'gateway' ? installation.gatewaySecretHash : installation.deviceSecretHash;
+    return expected && secretMatches(secret, expected) ? installation : null;
+  }
+
+  authenticateGateway(installationId, gatewayId, secret) {
+    const installation = this.data.installations[installationId];
+    const gateway = installation?.gateways?.[gatewayId];
+    if (!installation?.active || !gateway || !secret) return null;
+    return secretMatches(secret, gateway.secretHash) ? { installation, gateway } : null;
+  }
+
+  normalizedInstallationChanges(id, changes) {
+    const installation = this.data.installations[id];
+    if (!installation) return null;
+    const deviceToken = changes.deviceToken || installation.deviceToken;
+    const preferences = changes.preferences
+      ? normalizePreferences({ ...installation.preferences, ...changes.preferences })
+      : installation.preferences;
+    const active = changes.active ?? installation.active;
+    return { installation, deviceToken, preferences, active };
+  }
+
+  wouldUpdateInstallation(id, changes) {
+    const normalized = this.normalizedInstallationChanges(id, changes);
+    if (!normalized) return false;
+    const { installation, deviceToken, preferences, active } = normalized;
+    const preferencesChanged = !preferencesEqual(preferences, installation.preferences);
+    return deviceToken !== installation.deviceToken || preferencesChanged || active !== installation.active;
+  }
+
+  updateInstallation(id, changes) {
+    const normalized = this.normalizedInstallationChanges(id, changes);
+    if (!normalized) return null;
+    const { installation, deviceToken, preferences, active } = normalized;
+    if (!this.wouldUpdateInstallation(id, changes)) return publicInstallation(installation);
+    installation.deviceToken = deviceToken;
+    installation.preferences = preferences;
+    installation.active = active;
+    installation.updatedAt = new Date().toISOString();
+    this.save();
+    return publicInstallation(installation);
+  }
+
+  deactivateInstallation(id) {
+    return this.updateInstallation(id, { active: false });
+  }
+
+  // Google refused the device token: only the installation still holding
+  // that token loses its access; a replacement registered while the refused push
+  // was in flight stays, along with everything it holds open.
+  deactivateInstallationForToken(id, token) {
+    if (this.data.installations[id]?.deviceToken !== token) return null;
+    return this.deactivateInstallation(id);
+  }
+
+  // Optional dashboard binding (#148): `dashboardId` is the opaque app
+  // dashboard UUID the device attached to this pairing. It is bound at
+  // PAIRING CREATION, copied onto the gateway record at claim, and from then
+  // on derived from the authenticated gateway credential on every event —
+  // the plugin can never choose or change it per event.
+  createPairing(installationId, dashboardId = undefined) {
+    // Persistence-boundary validation: the HTTP handler pre-validates, but a
+    // future internal caller must not be able to persist an arbitrary
+    // dashboard identity either.
+    const canonicalDashboardId = normalizeDashboardId(dashboardId);
+    this.prune();
+    for (const [codeHash, pairing] of Object.entries(this.data.pairings)) {
+      if (pairing.installationId === installationId) delete this.data.pairings[codeHash];
+    }
+    const code = readableCode();
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const pairing = { installationId, expiresAt };
+    if (canonicalDashboardId) pairing.dashboardId = canonicalDashboardId;
+    this.data.pairings[hashSecret(normalizeCode(code))] = pairing;
+    this.save();
+    return { code, expiresAt };
+  }
+
+  claimPairing(code, gatewayName) {
+    this.prune();
+    const key = hashSecret(normalizeCode(code));
+    const pairing = this.data.pairings[key];
+    if (!pairing) return null;
+    const installation = this.data.installations[pairing.installationId];
+    if (installation?.active && Object.keys(installation.gateways ?? {}).length >= this.limits.maxGatewaysPerInstallation) {
+      throw capacityError('gateway_limit_reached');
+    }
+    delete this.data.pairings[key];
+    if (!installation?.active) { this.save(); return null; }
+    const gatewayId = randomUUID();
+    const gatewaySecret = randomBytes(32).toString('base64url');
+    installation.gateways ??= {};
+    // Revalidate the pairing's binding before it becomes gateway identity:
+    // the pairing record may have been rehydrated from disk (hand-edited or
+    // written by another build), and a malformed persisted identity must
+    // never become gateway identity. Invalid bindings are dropped — the
+    // gateway claims unbound (legacy shape) rather than inheriting garbage.
+    let claimedDashboardId;
+    try {
+      claimedDashboardId = normalizeDashboardId(pairing.dashboardId);
+    } catch {
+      claimedDashboardId = undefined;
+    }
+    installation.gateways[gatewayId] = {
+      id: gatewayId,
+      name: String(gatewayName || 'Hermes gateway').slice(0, 80),
+      secretHash: hashSecret(gatewaySecret),
+      // The pairing's validated dashboard binding (when one exists)
+      // becomes the gateway's persistent identity: every push this gateway
+      // triggers is stamped with it for the lifetime of the credential.
+      ...(claimedDashboardId ? { dashboardId: claimedDashboardId } : {}),
+      createdAt: new Date().toISOString(),
+    };
+    installation.updatedAt = new Date().toISOString();
+    this.save();
+    return { gatewayId, installationId: installation.id, gatewaySecret };
+  }
+
+  canClaimPairing(code) {
+    const key = hashSecret(normalizeCode(code));
+    const pairing = this.data.pairings[key];
+    const expiresAt = Date.parse(pairing?.expiresAt);
+    if (!pairing || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false;
+    const installation = this.data.installations[pairing.installationId];
+    if (!installation?.active) return false;
+    if (Object.keys(installation.gateways ?? {}).length >= this.limits.maxGatewaysPerInstallation) {
+      throw capacityError('gateway_limit_reached');
+    }
+    return true;
+  }
+
+  // Every accepted event refreshes the gateway's last-seen plugin version and
+  // capabilities, kept for an operator reading the data file.
+
+  recordGatewayPlugin(installationId, gatewayId, { version, capabilities = [] }) {
+    const installation = this.data.installations[installationId];
+    const gateway = installation?.gateways?.[gatewayId];
+    if (!gateway) return;
+    gateway.pluginVersion = String(version || '').slice(0, 40) || undefined;
+    gateway.pluginCapabilities = Array.isArray(capabilities)
+      ? capabilities.map(String).map((capability) => capability.slice(0, 40)).filter(Boolean).slice(0, 16)
+      : [];
+    gateway.lastEventAt = new Date().toISOString();
+    installation.updatedAt = new Date().toISOString();
+    this.saveSoon();
+  }
+
+  removeGateway(installationId, gatewayId) {
+    const installation = this.data.installations[installationId];
+    if (!installation?.gateways?.[gatewayId]) return false;
+    delete installation.gateways[gatewayId];
+    installation.updatedAt = new Date().toISOString();
+    this.save();
+    return true;
+  }
+
+  acceptEvent(installationId, eventId, gatewayId) {
+    // Gateway-scoped ownership (#review round 2): two gateways on one
+    // installation legitimately emit identical event_id values (identical
+    // dashboards both use profile/session "default" and deterministic
+    // plugin event ids). Deduping installation-wide let one dashboard's
+    // event swallow another's.
+    if (!this.events.add(installationId, gatewayId, eventId)) return false;
+    // Last-seen is stamped on every accepted event, version-carrying or not,
+    // so a gateway that has sent events shows apart from one that only paired.
+    if (gatewayId) {
+      const gateway = this.data.installations[installationId]?.gateways?.[gatewayId];
+      if (gateway) {
+        gateway.lastEventAt = new Date().toISOString();
+        this.saveSoon();
+      }
+    }
+    return true;
+  }
+
+  // Forgets an accepted event whose push failed, so the plugin's retry with
+  // the same id is sent instead of answered as a duplicate.
+  releaseEvent(installationId, eventId, gatewayId) {
+    this.events.remove(installationId, gatewayId, eventId);
+  }
+
+  hasAcceptedEvent(installationId, eventId, gatewayId) {
+    return this.events.has(installationId, gatewayId, eventId);
+  }
+
+  // ── Pending decisions (clarify answer loop) ─────────────────────────
+  // A clarify decision the plugin pushes carries a plugin-minted request id
+  // because the gateway's own clarify id is unreachable to plugins. The
+  // device answers by that id; the plugin polls for the answer while its
+  // middleware blocks the tool call. Approval decisions answer via the
+  // gateway directly and never enter this store.
+  //
+  // Batch decisions (plugin 0.3+) additionally carry `questions` — the full
+  // gateway question set with qids. Answers accumulate PER QUESTION with
+  // first-answer-wins per qid, and the decision completes only when every
+  // qid is locked, so background batch clarifies preserve the whole batch.
+
+  // Gateway-scoped pending-decision identity: every parked decision lives
+  // at `installationId:gatewayId:requestId`, so same-id decisions from two
+  // gateways (identical dashboards minting identical plugin request ids)
+  // coexist and can never mutate each other. Operations resolve EXACTLY
+  // this key — the legacy bare-requestId layout (pre-scoping relays) is not
+  // migrated: parked decisions live at most 2h, so a relay upgrade lets the
+  // old entries age out rather than carrying ambiguous ownership forward.
+  static decisionKey(installationId, gatewayId, id) {
+    return `${installationId}:${gatewayId}:${id}`;
+  }
+
+  savePendingDecision({ id, installationId, gatewayId, question, choices, questions, deliverable = true }) {
+    const key = RelayStore.decisionKey(installationId, gatewayId, id);
+    this.assertPendingDecisionCapacity(installationId, key);
+    if (this.data.pendingDecisions[key]) return false;
+    // installationId/gatewayId are denormalized onto the record for the
+    // legacy-decision upgrade scan and the capacity counts; the scoped KEY
+    // remains the ownership authority.
+    this.data.pendingDecisions[key] = {
+      id,
+      installationId,
+      gatewayId,
+      question: String(question ?? ''),
+      choices: Array.isArray(choices) ? choices.map(String) : [],
+      // Shared sanitizer (also applied at the relay trust boundary): a
+      // malformed push must never park an oversized or malformed batch.
+      questions: sanitizeBatchQuestions(questions),
+      // Null prototype: answer maps are keyed by qid, and a qid like
+      // "__proto__" must never reach Object.prototype pollution paths.
+      answers: Object.create(null),
+      // False when device preferences mean no card was shown; the gateway's
+      // poller stops early instead of polling a decision nobody can answer.
+      deliverable: Boolean(deliverable),
+      createdAt: Date.now(),
+    };
+    this.save();
+    return true;
+  }
+
+  assertPendingDecisionCapacity(installationId, key = undefined) {
+    this.prune();
+    if (key && this.data.pendingDecisions[key]) return true;
+    const decisions = Object.entries(this.data.pendingDecisions);
+    const installationDecisions = decisions.filter(([, decision]) => decision?.installationId === installationId);
+    const active = decisions.filter(([, decision]) => decisionIsActive(decision));
+    const installationActive = installationDecisions.filter(([, decision]) => decisionIsActive(decision));
+    if (active.length >= this.decisionLimits.activeGlobal || installationActive.length >= this.decisionLimits.activePerInstallation
+      || decisions.length >= this.decisionLimits.retainedGlobal || installationDecisions.length >= this.decisionLimits.retainedPerInstallation) {
+      const error = new Error('decision_capacity_exceeded');
+      error.code = 'decision_capacity_exceeded';
+      error.status = 429;
+      throw error;
+    }
+    return true;
+  }
+
+  wouldRespondPendingDecision(installationId, gatewayId, id, questionId = '') {
+    const decision = this.data.pendingDecisions[RelayStore.decisionKey(installationId, gatewayId, id)];
+    const createdAt = Number(decision?.createdAt);
+    if (!decision || !Number.isFinite(createdAt) || createdAt < Date.now() - 2 * 60 * 60_000) return false;
+    if (decision.cancelledAt || decision.answer !== undefined) return false;
+    const batchQuestions = decisionQuestions(decision);
+    if (!batchQuestions.length) return true;
+    const target = questionId || batchQuestions[0].qid;
+    if (!batchQuestions.some((question) => question.qid === target)) return false;
+    const answers = decision.answers ?? {};
+    return !Object.hasOwn(answers, target);
+  }
+
+  respondPendingDecision(installationId, gatewayId, id, answer, questionId = '') {
+    this.prune();
+    const decision = this.data.pendingDecisions[RelayStore.decisionKey(installationId, gatewayId, id)];
+    if (!decision) return { outcome: 'unknown' };
+    // Distinct device-facing outcomes: a CANCELLED decision (the original
+    // gateway path won) releases the whole pushed card (410
+    // decision_released), while an already-answered decision stays a 409
+    // (answered elsewhere). Collapsing them would clear cards that still
+    // have answerable questions.
+    if (decision.cancelledAt) return { outcome: 'released' };
+    if (decision.answer !== undefined) return { outcome: 'already_answered' };
+    const batchQuestions = decisionQuestions(decision);
+    if (batchQuestions.length) {
+      decision.answers ??= Object.create(null);
+      const answers = decision.answers;
+      // A question_id targets one qid of the batch; without one, the sender
+      // is a pre-batch device answering the collapsed first-question card.
+      const target = questionId || batchQuestions[0].qid;
+      // An unknown qid on a live decision is the sender's mistake, not a
+      // missing decision — surfaced as its own outcome so the device gets
+      // 400 invalid_question_id instead of a misleading 404.
+      if (!batchQuestions.some((question) => question.qid === target)) {
+        return { outcome: 'invalid_question' };
+      }
+      // hasOwn, not truthiness: a stored "" answer must still read as
+      // locked, and sanitized qids can never collide with Object.prototype.
+      if (Object.hasOwn(answers, target)) return { outcome: 'already_answered' };
+      answers[target] = boundedAnswer(answer);
+      decision.answeredAt = Date.now();
+      const remaining = batchQuestions.map((question) => question.qid)
+        .filter((qid) => !Object.hasOwn(answers, qid));
+      this.save();
+      return { outcome: 'answered', remaining };
+    }
+    decision.answer = boundedAnswer(answer);
+    decision.answeredAt = Date.now();
+    this.save();
+    return { outcome: 'answered' };
+  }
+
+  pendingDecisionStatus(installationId, gatewayId, id) {
+    this.prune();
+    const decision = this.data.pendingDecisions[RelayStore.decisionKey(installationId, gatewayId, id)];
+    if (!decision) {
+      return { status: 'unknown' };
+    }
+    if (decision.cancelledAt) {
+      // Released by the gateway: the poller treats this like expiry and
+      // falls back to the original clarify path.
+      return { status: 'unknown' };
+    }
+    const batchQuestions = decisionQuestions(decision);
+    if (batchQuestions.length) {
+      const answers = decision.answers ?? {};
+      const remaining = batchQuestions.map((question) => question.qid)
+        .filter((qid) => !Object.hasOwn(answers, qid));
+      if (remaining.length === 0) {
+        return { status: 'answered', answers, remaining: [] };
+      }
+      return {
+        status: 'pending',
+        // Legacy records predate the flag; treat missing as deliverable so
+        // the poller's behavior is unchanged for decisions parked by older
+        // relays.
+        deliverable: decision.deliverable !== false,
+        remaining,
+        answers,
+      };
+    }
+    if (decision.answer === undefined) {
+      return { status: 'pending', deliverable: decision.deliverable !== false };
+    }
+    return { status: 'answered', answer: decision.answer };
+  }
+
+  // Called by the plugin when the original clarify path won the race or the
+  // poll budget fell back to it: late device answers must be rejected (409)
+  // rather than parked as results nobody will read. Cancelling an
+  // already-completed decision reports it instead of double-marking.
+  cancelPendingDecision(installationId, gatewayId, id) {
+    this.prune();
+    const decision = this.data.pendingDecisions[RelayStore.decisionKey(installationId, gatewayId, id)];
+    if (!decision) {
+      return 'unknown';
+    }
+    if (this.pendingDecisionStatus(installationId, gatewayId, id).status === 'answered') {
+      return 'answered';
+    }
+    if (decision.cancelledAt) return 'cancelled';
+    decision.cancelledAt = Date.now();
+    this.save();
+    return 'cancelled';
+  }
+
+  // Called by the relay intake when Google rejected the send AFTER a
+  // deliverable decision was parked: no device received the answerable
+  // card, so the next plugin poll must see deliverable:false and fall back
+  // to the native clarify path instead of waiting out the poll budget.
+  // Released and fully completed decisions (scalar or batch) are never
+  // mutated — their outcomes are already settled.
+  markPendingDecisionUndeliverable(installationId, gatewayId, id) {
+    this.prune();
+    const decision = this.data.pendingDecisions[RelayStore.decisionKey(installationId, gatewayId, id)];
+    if (!decision) {
+      return 'unknown';
+    }
+    // pendingDecisionStatus reports 'answered' for BOTH a completed scalar
+    // decision (decision.answer set) and a completed batch (every qid
+    // locked) — one guard covers both shapes.
+    if (this.pendingDecisionStatus(installationId, gatewayId, id).status === 'answered') {
+      return 'skipped';
+    }
+    if (decision.cancelledAt) return 'skipped';
+    decision.deliverable = false;
+    this.save();
+    return 'marked';
+  }
+
+  prune() {
+    const now = Date.now();
+    for (const [key, pairing] of Object.entries(this.data.pairings)) {
+      const expiresAt = pairing && typeof pairing === 'object' ? Date.parse(pairing.expiresAt) : NaN;
+      if (!Number.isFinite(expiresAt) || expiresAt <= now) delete this.data.pairings[key];
+    }
+    // Clarify prompts live at most ~1h server-side (agent.clarify_timeout
+    // default 3600s); 2h covers drift and unlimited-config edge cases while
+    // still bounding the store.
+    for (const [key, decision] of Object.entries(this.data.pendingDecisions ?? {})) {
+      const createdAt = decision && typeof decision === 'object' ? Number(decision.createdAt) : NaN;
+      if (!Number.isFinite(createdAt) || createdAt < now - 2 * 60 * 60_000) delete this.data.pendingDecisions[key];
+    }
+  }
+}
+
+// Plain answers keep their 2,000-character bound. An end-to-end encrypted
+// answer (`e2e1.` + base64url, validated at the route) is stored whole:
+// truncating it would only break it.
+function boundedAnswer(answer) {
+  const value = String(answer ?? '');
+  return value.startsWith('e2e1.') ? value.slice(0, 11_000) : value.slice(0, 2000);
+}
+
+function capacityError(code) {
+  const error = new Error(code);
+  error.status = 429;
+  return error;
+}
+
+function decisionIsActive(decision) {
+  if (!decision || typeof decision !== 'object' || decision.cancelledAt) return false;
+  if (decision.answer !== undefined) return false;
+  const questions = decisionQuestions(decision);
+  if (!questions.length) return true;
+  const answers = decision.answers ?? {};
+  return questions.some((question) => !Object.hasOwn(answers, question.qid));
+}
+
+function decisionQuestions(decision) {
+  if (!Array.isArray(decision?.questions)) return [];
+  return decision.questions.filter((question) =>
+    question !== null && typeof question === 'object' && typeof question.qid === 'string');
+}
+
+export function normalizePreferences(value = {}) {
+  value ??= {};
+  return Object.fromEntries(Object.entries(defaultPreferences).map(([key, fallback]) => [key, typeof value[key] === 'boolean' ? value[key] : fallback]));
+}
+
+function preferencesEqual(left, right) {
+  return Object.keys(defaultPreferences).every((key) => left?.[key] === right?.[key]);
+}
+
+// Batch decision bounds — mirror the plugin's sanitizer so a malformed push
+// can never park an oversized batch. Protocol/store maximum only: an
+// answerable card is further bounded by FCM's 4 KB data guard, and a batch
+// that exceeds it degrades to the plain banner (deliverable=false).
+export const MAX_BATCH_QUESTIONS = 8;
+export const MAX_BATCH_CHOICES = 8;
+
+// Single shared batch sanitizer for BOTH trust boundaries (the /v1/events
+// decision validation and the pending-decision store) so the notification
+// payload, the stored decision, and the poll answers can never disagree
+// about what a batch contains. Output is the WIRE shape (snake_case
+// multi_select — this array is embedded in pushes verbatim). One
+// malformed entry is dropped rather than failing the whole decision; a
+// valid remainder survives. Deduplicates qids (first occurrence wins) and
+// repeated choice values.
+const UNSAFE_QIDS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export function sanitizeBatchQuestions(value) {
+  if (!Array.isArray(value)) return [];
+  const questions = [];
+  const seenQids = new Set();
+  for (const entry of value.slice(0, MAX_BATCH_QUESTIONS)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const qid = String(entry.qid ?? '').trim().slice(0, 40);
+    // Gateway-minted qids are `q<index>`; this charset plus the reserved-name
+    // rejection keeps answer maps prototype-safe and per-question respond
+    // targets unambiguous.
+    if (!/^[A-Za-z0-9_-]+$/.test(qid) || UNSAFE_QIDS.has(qid) || seenQids.has(qid)) continue;
+    const question = String(entry.question ?? '').trim().slice(0, 500);
+    if (!question) continue;
+    const seenChoices = new Set();
+    const choices = (Array.isArray(entry.choices) ? entry.choices : [])
+      .map((choice) => String(choice ?? '').trim().slice(0, 80))
+      .filter((choice) => {
+        if (!choice || seenChoices.has(choice)) return false;
+        seenChoices.add(choice);
+        return true;
+      })
+      .slice(0, MAX_BATCH_CHOICES);
+    questions.push({
+      qid,
+      question,
+      choices,
+      multi_select: entry.multi_select === true,
+    });
+    seenQids.add(qid);
+  }
+  return questions;
+}
+
+// Canonical dashboard UUID form (lowercase). The nil UUID is
+// rejected: it would bind pushes to an identity no dashboard can hold.
+const DASHBOARD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NIL_DASHBOARD_ID = '00000000-0000-0000-0000-000000000000';
+
+export function normalizeDashboardId(value) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !DASHBOARD_ID_PATTERN.test(value)) {
+    throw new Error('invalid_dashboard_id');
+  }
+  const canonical = value.toLowerCase();
+  if (canonical === NIL_DASHBOARD_ID) throw new Error('invalid_dashboard_id');
+  return canonical;
+}
+
+function publicInstallation(installation) {
+  return {
+    id: installation.id,
+    active: installation.active,
+    gateways: Object.values(installation.gateways ?? {}).map((gateway) => ({ id: gateway.id, name: gateway.name })),
+    preferences: installation.preferences,
+    updated_at: installation.updatedAt,
+  };
+}
+
+function hashSecret(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+// Authentication-boundary digest comparison. Persisted hashes are CANONICAL:
+// exactly 64 lowercase hexadecimal characters — the output format of
+// hashSecret since the store was created. Anything else in the stored field
+// (corrupt, truncated, or manually edited state, including an uppercase
+// re-encoding) rejects before any comparison, keeping accepted state exactly
+// as narrow as the old case-sensitive string equality. For valid records the
+// two decoded 32-byte buffers are compared in constant time, so response
+// timing cannot leak how much of a credential prefix matched.
+const CANONICAL_SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function secretMatches(candidate, expectedHash) {
+  const expectedText = String(expectedHash ?? '');
+  if (!CANONICAL_SHA256_HEX.test(expectedText)) return false;
+  const actual = Buffer.from(hashSecret(candidate), 'hex');
+  const expected = Buffer.from(expectedText, 'hex');
+  // Both sides are 32 bytes by construction; the guard stays defensive in
+  // case timingSafeEqual's throw-on-unequal-length contract ever changes.
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function normalizeCode(value) {
+  return String(value).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+}
+
+function readableCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = randomBytes(10);
+  const value = [...bytes].map((byte) => alphabet[byte % alphabet.length]).join('');
+  return `${value.slice(0, 5)}-${value.slice(5)}`;
+}

@@ -1,0 +1,4 @@
+deploy/.env
+deploy/data/
+deploy/secrets/
+node_modules/

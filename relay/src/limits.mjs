@@ -1,0 +1,108 @@
+// Capacity defaults for the shared public relay. Every bound is a backstop
+// against floods, sized far above what thousands of real installations use;
+// none of them is a quota ordinary traffic should reach. Operators can tune
+// each one with the RELAY_* variable next to it.
+
+export const DEFAULT_STORE_LIMITS = Object.freeze({
+  maxInstallations: 50_000,
+  // Re-pairing a profile adds a gateway without revoking the old one, so a
+  // long-lived installation accumulates gateways.
+  maxGatewaysPerInstallation: 64,
+  // Event IDs only live in memory (see event-ledger.mjs). Reaching either
+  // bound forgets old IDs; it never rejects an event.
+  maxEventIdsPerInstallation: 5_000,
+  maxGlobalEventIds: 250_000,
+  // Clarify decisions are persisted, and a full batch record can reach about
+  // 13 KB, so these also cap how large a flood can make the data file.
+  activeGlobal: 1_024,
+  activePerInstallation: 32,
+  retainedGlobal: 4_096,
+  retainedPerInstallation: 128,
+});
+
+// Live turns (live-activities.mjs) live in memory only: one per chat a
+// phone is watching a turn in, a few hundred bytes each. Past either bound
+// the oldest registration is forgotten.
+export const DEFAULT_LIVE_ACTIVITY_LIMITS = Object.freeze({
+  maxActivities: 50_000,
+  maxPerInstallation: 8,
+});
+
+// Process-wide admissions per minute, per class of action.
+export const DEFAULT_BUDGETS = Object.freeze({
+  registrationsPerMinute: 24,
+  // Registration challenges (token-proof.mjs): each is a push, and a phone
+  // asks for one before registering or moving to a new device token.
+  tokenChallengesPerMinute: 240,
+  eventsPerMinute: 6_000,
+  // Device updates that change state, pairing creation, and valid claims.
+  deviceChangesPerMinute: 240,
+  // State-changing decision answers and releases.
+  decisionActionsPerMinute: 600,
+  // Installation deactivation and gateway revocation.
+  revocationsPerMinute: 24,
+  // Live turns phones register (one per turn they watch) and the updates
+  // hosts send to them (at most one per watched turn per 5 s).
+  liveActivityRegistrationsPerMinute: 3_000,
+  liveActivityUpdatesPerMinute: 30_000,
+});
+
+// Hermes calls you (#449): call requests per installation in 24 hours.
+// Each host holds its user to their own limits (at most 60 a day); this
+// backstops a host that doesn't.
+export const DEFAULT_CALL_LIMITS = Object.freeze({
+  callsPerInstallationPerDay: 60,
+});
+
+const STORE_LIMIT_VARIABLES = Object.freeze({
+  maxInstallations: 'RELAY_MAX_INSTALLATIONS',
+  maxGatewaysPerInstallation: 'RELAY_MAX_GATEWAYS_PER_INSTALLATION',
+  maxEventIdsPerInstallation: 'RELAY_MAX_EVENT_IDS_PER_INSTALLATION',
+  maxGlobalEventIds: 'RELAY_MAX_EVENT_IDS',
+  activeGlobal: 'RELAY_MAX_ACTIVE_DECISIONS',
+  retainedGlobal: 'RELAY_MAX_RETAINED_DECISIONS',
+});
+
+const LIVE_ACTIVITY_LIMIT_VARIABLES = Object.freeze({
+  maxActivities: 'RELAY_MAX_LIVE_ACTIVITIES',
+  maxPerInstallation: 'RELAY_MAX_LIVE_ACTIVITIES_PER_INSTALLATION',
+});
+
+const CALL_LIMIT_VARIABLES = Object.freeze({
+  callsPerInstallationPerDay: 'RELAY_CALLS_PER_INSTALLATION_PER_DAY',
+});
+
+const BUDGET_VARIABLES = Object.freeze({
+  registrationsPerMinute: 'RELAY_REGISTRATIONS_PER_MINUTE',
+  tokenChallengesPerMinute: 'RELAY_TOKEN_CHALLENGES_PER_MINUTE',
+  eventsPerMinute: 'RELAY_EVENTS_PER_MINUTE',
+  deviceChangesPerMinute: 'RELAY_DEVICE_CHANGES_PER_MINUTE',
+  decisionActionsPerMinute: 'RELAY_DECISION_ACTIONS_PER_MINUTE',
+  revocationsPerMinute: 'RELAY_REVOCATIONS_PER_MINUTE',
+  liveActivityRegistrationsPerMinute: 'RELAY_LIVE_ACTIVITY_REGISTRATIONS_PER_MINUTE',
+  liveActivityUpdatesPerMinute: 'RELAY_LIVE_ACTIVITY_UPDATES_PER_MINUTE',
+});
+
+// Unset or empty variables keep the default (Compose passes `${VAR:-}` as an
+// empty string); anything else must be a positive integer, so a typo fails at
+// boot instead of silently disabling a bound.
+export function limitsFromEnv(env = process.env) {
+  return {
+    storeLimits: readIntegers(DEFAULT_STORE_LIMITS, STORE_LIMIT_VARIABLES, env),
+    budgets: readIntegers(DEFAULT_BUDGETS, BUDGET_VARIABLES, env),
+    callLimits: readIntegers(DEFAULT_CALL_LIMITS, CALL_LIMIT_VARIABLES, env),
+    liveActivityLimits: readIntegers(DEFAULT_LIVE_ACTIVITY_LIMITS, LIVE_ACTIVITY_LIMIT_VARIABLES, env),
+  };
+}
+
+function readIntegers(defaults, variables, env) {
+  const values = { ...defaults };
+  for (const [key, name] of Object.entries(variables)) {
+    const raw = env[name];
+    if (raw === undefined || raw.trim() === '') continue;
+    const value = /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : NaN;
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer.`);
+    values[key] = value;
+  }
+  return values;
+}
