@@ -197,7 +197,7 @@ def chat(model: str, key: str, prompt: str) -> dict:
 def defuse(text: str) -> str:
     """No @mentions or hidden comment markers from the model's text."""
     text = text.replace(MARKER, "")
-    return re.sub(r"@(?=[A-Za-z0-9])", "@​", text)
+    return re.sub(r"@(?=[A-Za-z0-9])", "@\u200b", text)
 
 
 def upsert_comment(repo: str, number: int, body: str) -> None:
