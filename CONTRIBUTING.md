@@ -33,6 +33,13 @@ push to main. To run them locally:
     pip install -r tests/requirements.txt
     python -m pytest --rootdir=tests tests
 
+## Reviews
+
+Each pull request gets an automated review: an AI model reads the diff and posts its findings
+as one comment, updated on every push. It's advice, not a gate: the maintainer reviews every
+PR and does the merging. PRs from forks are reviewed once a maintainer has read them and added
+the `run-review` label. `main` only changes through pull requests whose checks pass.
+
 ## The relay
 
 The relay in `relay/` is a small Node.js service with no npm dependencies,
