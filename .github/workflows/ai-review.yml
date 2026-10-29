@@ -1,0 +1,51 @@
+name: AI review
+
+# An AI review of each pull request, posted as one comment and updated on every push
+# (.github/scripts/ai_review.py). It's advice: the maintainer reviews and merges, and the
+# bot can't approve or merge anything. PRs from this repository's own branches are reviewed
+# on every push. A fork's PR is reviewed once a maintainer adds the run-review label after
+# reading it, and on each later push while the label stays; removing the label stops it.
+# The model sees only the PR's text and diff: no code from the PR runs here.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+
+permissions: {}
+
+jobs:
+  review:
+    name: AI review
+    if: >-
+      !github.event.pull_request.draft && github.event.pull_request.state == 'open' && (
+        (github.event.pull_request.head.repo.full_name == github.repository && github.event.action != 'labeled') ||
+        (github.event.pull_request.head.repo.full_name != github.repository && (
+          (github.event.action == 'labeled' && github.event.label.name == 'run-review') ||
+          (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-review'))
+        ))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A later push replaces a review still running for the same PR.
+    concurrency:
+      group: ai-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      # The base branch's own files (the script and the rules it sends), never the PR's.
+      - name: Check out the base branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Review
+        run: python3 .github/scripts/ai_review.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          MODEL: deepseek-v4.1-flash:1017
