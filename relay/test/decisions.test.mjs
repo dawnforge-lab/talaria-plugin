@@ -39,7 +39,7 @@ test('storage limits must be positive safe integers before store files are touch
 test('registration with null preferences uses the default preferences', () => {
   const relay = store();
   const created = relay.createInstallation({
-    bundleId: 'com.milim.relay', deviceToken: 'n'.repeat(64), preferences: null,
+    bundleId: 'lab.dawnforge.hermes', deviceToken: 'n'.repeat(64), preferences: null,
   });
 
   assert.equal(created.installation.preferences.enabled, true);
@@ -217,7 +217,7 @@ test('event metadata is written by a deferred save, and an immediate save includ
 test('installation update preflight compares preference meaning, not key order', () => {
   const relay = store();
   const created = relay.createInstallation({
-    bundleId: 'com.milim.relay', deviceToken: 'a'.repeat(64),
+    bundleId: 'lab.dawnforge.hermes', deviceToken: 'a'.repeat(64),
     preferences: { enabled: false, show_previews: true },
   });
   const installation = relay.data.installations[created.installation.id];
@@ -239,7 +239,7 @@ test('installation update preflight compares preference meaning, not key order',
 test('installation update preflight preserves explicit enablement for legacy preferences', () => {
   const relay = store();
   const created = relay.createInstallation({
-    bundleId: 'com.milim.relay', deviceToken: 'b'.repeat(64), preferences: {},
+    bundleId: 'lab.dawnforge.hermes', deviceToken: 'b'.repeat(64), preferences: {},
   });
   relay.data.installations[created.installation.id].preferences = {};
   relay.save();
@@ -701,7 +701,7 @@ test('credential checks accept exact secrets and reject wrong or corrupt digests
   // and unequal-length stored digests reject without throwing.
   const relay = store();
   const { installation, deviceSecret } = relay.createInstallation({
-    bundleId: 'com.milim.relay',
+    bundleId: 'lab.dawnforge.hermes',
     deviceToken: 'a'.repeat(64),
   });
   assert.ok(relay.authenticate(installation.id, deviceSecret, 'device'), 'correct device credential accepted');
@@ -751,7 +751,7 @@ test('pairing dashboard binding: created with dashboard_id, bound at claim, pers
   const relay = store();
   const dashboardId = '0f5c8a34-1b2d-4e5f-8a9b-0c1d2e3f4a5b';
   const { installation, deviceSecret } = relay.createInstallation({
-    bundleId: 'com.milim.relay',
+    bundleId: 'lab.dawnforge.hermes',
     deviceToken: 'a'.repeat(64),
   });
 
@@ -782,7 +782,7 @@ test('pairing dashboard binding: created with dashboard_id, bound at claim, pers
 test('pairing without dashboard_id keeps the pre-dashboard gateway shape', () => {
   const relay = store();
   const { installation } = relay.createInstallation({
-    bundleId: 'com.milim.relay',
+    bundleId: 'lab.dawnforge.hermes',
     deviceToken: 'a'.repeat(64),
   });
   const pairing = relay.createPairing(installation.id);
@@ -794,7 +794,7 @@ test('pairing without dashboard_id keeps the pre-dashboard gateway shape', () =>
 test('createPairing validates dashboard_id at the persistence boundary', () => {
   const relay = store();
   const { installation } = relay.createInstallation({
-    bundleId: 'com.milim.relay',
+    bundleId: 'lab.dawnforge.hermes',
     deviceToken: 'a'.repeat(64),
   });
 
@@ -822,7 +822,7 @@ test('createPairing validates dashboard_id at the persistence boundary', () => {
 test('load() drops malformed persisted bindings instead of emitting them', () => {
   const relay = store();
   const { installation } = relay.createInstallation({
-    bundleId: 'com.milim.relay',
+    bundleId: 'lab.dawnforge.hermes',
     deviceToken: 'a'.repeat(64),
   });
 
